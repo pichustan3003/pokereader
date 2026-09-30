@@ -1,6 +1,6 @@
 import json
 
-from math import ceil, sqrt, floor
+from math import isqrt
 
 class location:
     def __init__(self):
@@ -8,7 +8,7 @@ class location:
         self.mainData = 0x25A3
         self.bag = 0x25C9
         self.money = 0x25F3
-        self.rivalName = 0x25F3
+        self.rivalName = 0x25F6
         self.badges = 0x2602
         self.id = 0x2605
         self.pikachuFriendship = 0x271C
@@ -20,6 +20,12 @@ class location:
         self.starter = 0x29C3
         self.clock = 0x2CED 
         self.party = 0x2F2C
+        self.box1 = 0x4000
+        self.box7 = 0x6000
+        self.daycare = 0x2CF4
+
+
+        self.tilesetType = 0x3522 # for checksum testing
 
 class attributedDictionary:
     def __init__(self) -> None:
@@ -33,8 +39,8 @@ class pokemon:
             MOVES.get(self.move3, f"Unknown ({self.move3:02X})"),
             MOVES.get(self.move4, f"Unknown ({self.move4:02X}")
         ]
-
         return (
+            f"{self.index}\n"
             f"{self.nickname} ({self.speciesName})\n"
             f"Level: {self.lvl}\n"
             f"HP: {self.remainingHP}/{self.HP}\n"
@@ -48,6 +54,7 @@ class pokemon:
             f"Trainer ID: {self.tID}"
         )
     def __init__(self, data: bytes, inbox : bool) -> None:
+
         self.OTName = ""
         self.index = data[0]
         self.speciesName = POKEMON[self.index]
@@ -82,38 +89,38 @@ class pokemon:
             (self.spcIV & 1)
         )
 
-        self.lvl = data[0x21] if inbox else data[3]
+        self.lvl = data[0x21] if not inbox else data[3]
 
         dex_number = POKEDEX_NUMBER[self.index] # type: ignore
-        base = BASE_STATS[dex_number]
+        base = BASE_STATS[self.index]
 
-        self.HP = self.calculate_stat(
-            base["HP"], self.hpIV, self.HPEV, hp=True
-        )
+        # Party mons store the stats the game currently uses (not recalc'd on EV gain).
+        if not inbox:
+            self.HP = int.from_bytes(data[0x22:0x24], "big")
+            self.attack = int.from_bytes(data[0x24:0x26], "big")
+            self.defense = int.from_bytes(data[0x26:0x28], "big")
+            self.speed = int.from_bytes(data[0x28:0x2A], "big")
+            self.special = int.from_bytes(data[0x2A:0x2C], "big")
+        else:
+            self.HP = self.calculate_stat( # type: ignore
+                base["HP"], self.hpIV, self.HPEV, hp=True
+            )
 
-        self.attack = self.calculate_stat(
-            base["Attack"], self.atkIV, self.atkEV
-        )
+            self.attack = self.calculate_stat(
+                base["Attack"], self.atkIV, self.atkEV
+            )
 
-        self.defense = self.calculate_stat(
-            base["Defense"], self.defIV, self.defEV
-        )
+            self.defense = self.calculate_stat(
+                base["Defense"], self.defIV, self.defEV
+            )
 
-        self.speed = self.calculate_stat(
-            base["Speed"], self.spdIV, self.spdEV
-        )
+            self.speed = self.calculate_stat(
+                base["Speed"], self.spdIV, self.spdEV
+            )
 
-        self.special = self.calculate_stat(
-            base["Special"], self.spcIV, self.spcEV
-        )
-
-        print(
-            "HP:",
-            "base =", base["HP"],
-            "IV =", self.hpIV,
-            "EV =", self.HPEV,
-            "level =", self.lvl
-        )
+            self.special = self.calculate_stat(
+                base["Special"], self.spcIV, self.spcEV
+            )
 
     def setOTName(self, OTName:str):
         self.OTName = OTName
@@ -129,7 +136,7 @@ class pokemon:
         hp: bool = False
     ) -> int:
 
-        ev_bonus = floor(ceil(sqrt(ev)) / 4)
+        ev_bonus = isqrt(ev) // 4
 
         stat = (
             ((base + iv) * 2 + ev_bonus)
@@ -137,16 +144,17 @@ class pokemon:
         ) // 100
 
         if hp:
-            return stat + self.lvl + 10
-
-        return stat + 5
+            result = stat + self.lvl + 10
+        else:
+            result = stat + 5
+        return result
 
     
 
 class gameSave:
     def __init__(self, fileName : str):
         with open(fileName, "rb") as sav:
-
+            self.dump = sav.read()
             # read player's name
             sav.seek(locations.playerName)
             bytes = sav.read(11)
@@ -161,28 +169,24 @@ class gameSave:
 
             sav.seek(locations.mainData)
 
-            # read pokeattributedDictionary caught
+            # read dex caught
 
             caught = sav.read(0x13)
             self.caught = attributedDictionary()
             for mon in range(151):
                 if caught[mon // 8] & (1 << (mon % 8)):
-                    print(pokemonDexOrder[mon], "caught!")
                     self.caught.__setattr__(pokemonDexOrder[mon], True)
                 else:
-                    print(pokemonDexOrder[mon], "not caught!")
                     self.caught.__setattr__(pokemonDexOrder[mon], False)
 
-            # read pokeattributedDictionary seen
+            # read dex seen
 
             seen = sav.read(0x13)
             self.seen = attributedDictionary()
             for mon in range(151):
                 if seen[mon // 8] & (1 << (mon % 8)):
-                    print(pokemonDexOrder[mon], "seen!")
                     self.seen.__setattr__(pokemonDexOrder[mon], True)
                 else:
-                    print(pokemonDexOrder[mon], "not seen!")
                     self.seen.__setattr__(pokemonDexOrder[mon], False)
             sav.seek(locations.bag)
             self.bag : dict[str, int] = {}
@@ -192,14 +196,12 @@ class gameSave:
                 entry = sav.read(2)
                 if entry[0] not in ITEMS: continue
                 self.bag[ITEMS[entry[0]]] = entry[1]
-            print(self.bag)
 
             # read money
 
             sav.seek(locations.money)
 
             self.money = int(sav.read(3).hex())
-            print(self.money)
 
             # read rivals's name
             sav.seek(locations.rivalName)
@@ -218,17 +220,13 @@ class gameSave:
             binaryBadgeReg = bin(sav.read(1)[0])[2:]
             for i in range(len(binaryBadgeReg)):
                 if binaryBadgeReg[i] == "1":
-                    print(f"{BADGES[i]} badge obtained")
                     self.badges.__setattr__(BADGES[i], True)
                 else:
-                    print(f"{BADGES[i]} badge not obtained")
                     self.badges.__setattr__(BADGES[i], False)
 
             # read player id
             sav.seek(locations.id)
             self.id = int.from_bytes(sav.read(2))
-
-            print(self.id)
 
             # read pikachu friendship
 
@@ -246,12 +244,12 @@ class gameSave:
                 entry = sav.read(2)
                 if entry[0] not in ITEMS: continue
                 self.itemBox[ITEMS[entry[0]]] = entry[1]
-            print(self.itemBox)
 
             # get current box number
 
             sav.seek(locations.selectedBox)
-            self.selectedBox = int(bin(sav.read(1)[0])[3:],2)
+            bx = sav.read(1)[0]
+            self.selectedBox = int(bin(bx)[3:],2) if bx else 0
 
             # get elite 4 win count
 
@@ -272,27 +270,48 @@ class gameSave:
             sav.seek(locations.starter)
             self.starter = sav.read(1)[0]
 
+            # determine game type RB/Y
+
+            if self.starter:
+                self.version = "Y" if self.starter == 0x54 else "RB"
+            else:
+                self.version = "Y" if self.pikachuFriendship != 0 else "RB"
+
             # get time in seconds
 
             sav.seek(locations.clock)
             self.time = sav.read(2)[0]*3600
             self.time += sav.read(1)[0]*60
             self.time += sav.read(1)[0]
+            self.daycare = None
+            sav.seek(locations.daycare)
+            truthofcare = sav.read(1)[0]
+            if truthofcare:
+                bytes = sav.read(11)
+                daycarename = ""
+                for i in bytes:
+                    if i  == 0x50: break
+                    daycarename += POKERED_CHARMAP[i] 
+                
+                bytes = sav.read(11)
+                daycareot = ""
+                for i in bytes:
+                    if i  == 0x50: break
+                    daycareot += POKERED_CHARMAP[i]
 
-            """MAKE SURE TO ADD DAYCARE ONCE POKEMON STRUCTURE IS ADDED"""
-
+                self.daycare = pokemon(sav.read(33), True)
+                self.daycare.setNick(daycarename)
+                self.daycare.setOTName(daycareot)
 
 
             # Party data (woo)
 
             sav.seek(locations.party)
             self.partyCount = sav.read(1)[0]
-            for i in range(self.partyCount):
-                print(POKEMON[sav.read(1)[0]])
-            party : list[pokemon] = []
+            self.party : list[pokemon] = []
             sav.seek(locations.party+0x8)
             for i in range(self.partyCount):
-                party.append(pokemon(sav.read(44), False))
+                self.party.append(pokemon(sav.read(44), False))
             sav.seek(locations.party+0x110)
 
             for i in range(self.partyCount):
@@ -301,7 +320,7 @@ class gameSave:
                 for b in bytes:
                     if b  == 0x50: break
                     name += POKERED_CHARMAP[b] 
-                party[i].setOTName(name)
+                self.party[i].setOTName(name)
 
             sav.seek(locations.party+0x152)
             
@@ -311,10 +330,95 @@ class gameSave:
                 for b in bytes:
                     if b  == 0x50: break
                     name += POKERED_CHARMAP[b] 
-                party[i].setNick(name)
-                print(party[i])
+                self.party[i].setNick(name)
 
-            # read box data goes here
+            # read box data
+            self.boxes: list[list[pokemon]] = [[] for _ in range(12)]
+            for c in range(6):
+                sav.seek(locations.box1 + 0x462 * c)
+                boxCount = sav.read(1)[0]
+                sav.seek(locations.box1+0x16 + 0x462 * c)
+                print(boxCount)
+                if boxCount > 20:
+                    continue
+                for i in range(boxCount):
+                    self.boxes[c].append(pokemon(sav.read(33), True))
+                sav.seek(locations.box1+0x2AA + 0x462 * c)
+
+                for i in range(boxCount):
+                    data = sav.read(11)
+
+                    name = ""
+                    for b in data:
+                        if b == 0x50:
+                            break
+
+                        if b not in POKERED_CHARMAP:
+                            print(
+                                f"Bad character: {b:02X} "
+                                f"at 0x{sav.tell() - len(data):04X}, "
+                                f"slot {i}"
+                            )
+                            print("Raw:", data.hex(" "))
+                            break
+
+                        name += POKERED_CHARMAP[b]
+
+                    self.boxes[c][i].setOTName(name)
+
+                sav.seek(locations.box1+0x386 + 0x462 * c)
+                
+                for i in range(boxCount):
+                    bytes = sav.read(11)
+                    name = ""
+                    for b in bytes:
+                        if b  == 0x50: break
+                        name += POKERED_CHARMAP[b] 
+                    self.boxes[c][i].setNick(name)
+
+            for c in range(6,12):
+                sav.seek(locations.box7 + 0x462 * (c-6))
+                boxCount = sav.read(1)[0]
+                sav.seek(locations.box7+0x16 + 0x462 * (c-6))
+                if boxCount > 20:
+                    continue
+                for i in range(boxCount):
+                    self.boxes[c].append(pokemon(sav.read(33), True))
+                sav.seek(locations.box7+0x2AA + 0x462 * (c-6))
+
+                for i in range(boxCount):
+                    data = sav.read(11)
+
+                    name = ""
+                    for b in data:
+                        if b == 0x50:
+                            break
+
+                        if b not in POKERED_CHARMAP:
+                            print(
+                                f"Bad character: {b:02X} "
+                                f"at 0x{sav.tell() - len(data):04X}, "
+                                f"slot {i}"
+                            )
+                            print("Raw:", data.hex(" "))
+                            break
+
+                        name += POKERED_CHARMAP[b]
+
+                    self.boxes[c][i].setOTName(name)
+
+                sav.seek(locations.box7+0x386 + 0x462 * (c-6))
+                
+                for i in range(boxCount):
+                    bytes = sav.read(11)
+                    name = ""
+                    for b in bytes:
+                        if b  == 0x50: break
+                        name += POKERED_CHARMAP[b] 
+                    self.boxes[c][i].setNick(name)
+            print(self.daycare)
+    def generateChkSum(self, startingOffset : int, endingOffset : int):
+        return (~sum(self.dump[startingOffset:endingOffset])) & 0xFF
 
 with open("dex2.json", encoding="utf-8") as f: pokemonDexOrder = json.load(f)
 POKEDEX_NUMBER = { # type: ignore
@@ -593,21 +697,21 @@ POKEMON = {
     0x6C: "Ekans",
     0x6D: "Paras",
     0x6E: "Poliwhirl",
-    0x6F: "Weedle",
-    0x70: "Kakuna",
-    0x71: "Beedrill",
-    0x72: "MissingNo.",
-    0x73: "Dodrio",
-    0x74: "Primeape",
-    0x75: "Dugtrio",
-    0x76: "Venomoth",
-    0x77: "Dewgong",
-    0x78: "Caterpie",
-    0x79: "Metapod",
-    0x7A: "Butterfree",
-    0x7B: "Machamp",
-    0x7C: "MissingNo.",
-    0x7D: "Golduck",
+    0x6F: "Poliwrath",
+    0x70: "Weedle",
+    0x71: "Kakuna",
+    0x72: "Beedrill",
+    0x73: "MissingNo.",
+    0x74: "Dodrio",
+    0x75: "Primeape",
+    0x76: "Dugtrio",
+    0x77: "Venomoth",
+    0x78: "Dewgong",
+    0x79: "MissingNo.",
+    0x7A: "MissingNo.",
+    0x7B: "Caterpie",
+    0x7C: "Metapod",
+    0x7D: "Butterfree",
     0x7E: "Machamp",
     0x7F: "MissingNo.",
     0x80: "Golduck",
@@ -675,157 +779,172 @@ POKEMON = {
     0xBE: "Victreebel",
 }
 BASE_STATS = {
-    1:   {"HP": 45,  "Attack": 49,  "Defense": 49,  "Speed": 45,  "Special": 65},
-    2:   {"HP": 60,  "Attack": 62,  "Defense": 63,  "Speed": 60,  "Special": 80},
-    3:   {"HP": 80,  "Attack": 82,  "Defense": 83,  "Speed": 80,  "Special": 100},
-    4:   {"HP": 39,  "Attack": 52,  "Defense": 43,  "Speed": 65,  "Special": 50},
-    5:   {"HP": 58,  "Attack": 64,  "Defense": 58,  "Speed": 80,  "Special": 65},
-    6:   {"HP": 78,  "Attack": 84,  "Defense": 78,  "Speed": 100, "Special": 85},
-    7:   {"HP": 44,  "Attack": 48,  "Defense": 65,  "Speed": 43,  "Special": 50},
-    8:   {"HP": 59,  "Attack": 63,  "Defense": 80,  "Speed": 58,  "Special": 65},
-    9:   {"HP": 79,  "Attack": 83,  "Defense": 100, "Speed": 78,  "Special": 85},
-    10:  {"HP": 45,  "Attack": 30,  "Defense": 35,  "Speed": 45, "Special": 20},
-    11:  {"HP": 50,  "Attack": 20,  "Defense": 55,  "Speed": 30, "Special": 25},
-    12:  {"HP": 60,  "Attack": 45,  "Defense": 50,  "Speed": 70, "Special": 80},
-    13:  {"HP": 40,  "Attack": 35,  "Defense": 30,  "Speed": 50, "Special": 20},
-    14:  {"HP": 45,  "Attack": 25,  "Defense": 50,  "Speed": 35, "Special": 25},
-    15:  {"HP": 65,  "Attack": 80,  "Defense": 40, "Speed": 75, "Special": 45},
-    16:  {"HP": 40,  "Attack": 45,  "Defense": 40, "Speed": 56, "Special": 35},
-    17:  {"HP": 63,  "Attack": 60, "Defense": 55, "Speed": 71, "Special": 50},
-    18:  {"HP": 83,  "Attack": 80,  "Defense": 75, "Speed": 91, "Special": 70},
-    19:  {"HP": 30,  "Attack": 56, "Defense": 35, "Speed": 72, "Special": 25},
-    20:  {"HP": 55,  "Attack": 81, "Defense": 60, "Speed": 97, "Special": 50},
-    21:  {"HP": 40,  "Attack": 60,  "Defense": 30, "Speed": 70, "Special": 31},
-    22:  {"HP": 65,  "Attack": 90,  "Defense": 65, "Speed": 100, "Special": 61},
-    23:  {"HP": 35,  "Attack": 60,  "Defense": 44, "Speed": 55, "Special": 40},
-    24:  {"HP": 60,  "Attack": 85,  "Defense": 69, "Speed": 80, "Special": 65},
-    25:  {"HP": 35,  "Attack": 55,  "Defense": 40, "Speed": 90, "Special": 50},
-    26:  {"HP": 60,  "Attack": 90,  "Defense": 55, "Speed": 100, "Special": 90},
-    27:  {"HP": 50,  "Attack": 75,  "Defense": 85, "Speed": 40, "Special": 30},
-    28:  {"HP": 75,  "Attack": 100, "Defense": 110, "Speed": 65, "Special": 55},
-    29:  {"HP": 55,  "Attack": 47, "Defense": 52, "Speed": 41, "Special": 40},
-    30:  {"HP": 70,  "Attack": 62, "Defense": 67, "Speed": 56, "Special": 55},
-    31:  {"HP": 90,  "Attack": 92, "Defense": 87, "Speed": 76, "Special": 75},
-    32:  {"HP": 46,  "Attack": 57, "Defense": 40, "Speed": 50, "Special": 40},
-    33:  {"HP": 61,  "Attack": 72, "Defense": 57, "Speed": 65, "Special": 55},
-    34:  {"HP": 81,  "Attack": 102, "Defense": 77, "Speed": 85, "Special": 85},
-    35:  {"HP": 70,  "Attack": 45, "Defense": 48, "Speed": 35, "Special": 35},
-    36:  {"HP": 95,  "Attack": 70, "Defense": 73, "Speed": 60, "Special": 85},
-    37:  {"HP": 38,  "Attack": 41, "Defense": 40, "Speed": 65, "Special": 65},
-    38:  {"HP": 73,  "Attack": 76, "Defense": 75, "Speed": 100, "Special": 100},
-    39:  {"HP": 115, "Attack": 45, "Defense": 20, "Speed": 20, "Special": 25},
-    40:  {"HP": 140, "Attack": 70, "Defense": 45, "Speed": 45, "Special": 50},
-    41:  {"HP": 40,  "Attack": 45, "Defense": 35, "Speed": 55, "Special": 40},
-    42:  {"HP": 75,  "Attack": 80, "Defense": 70, "Speed": 90, "Special": 75},
-    43:  {"HP": 45,  "Attack": 50, "Defense": 55, "Speed": 30, "Special": 75},
-    44:  {"HP": 60,  "Attack": 65, "Defense": 70, "Speed": 40, "Special": 85},
-    45:  {"HP": 75,  "Attack": 80, "Defense": 85, "Speed": 50, "Special": 100},
-    46:  {"HP": 35,  "Attack": 70, "Defense": 55, "Speed": 25, "Special": 55},
-    47:  {"HP": 60,  "Attack": 95, "Defense": 80, "Speed": 30, "Special": 80},
-    48:  {"HP": 60,  "Attack": 55, "Defense": 50, "Speed": 45, "Special": 40},
-    49:  {"HP": 70,  "Attack": 65, "Defense": 60, "Speed": 90, "Special": 75},
-    50:  {"HP": 10,  "Attack": 55, "Defense": 25, "Speed": 95, "Special": 45},
-    51:  {"HP": 35,  "Attack": 80, "Defense": 50, "Speed": 120, "Special": 70},
-    52:  {"HP": 40,  "Attack": 45, "Defense": 35, "Speed": 90, "Special": 40},
-    53:  {"HP": 65,  "Attack": 70, "Defense": 60, "Speed": 115, "Special": 65},
-    54:  {"HP": 50,  "Attack": 52, "Defense": 48, "Speed": 55, "Special": 50},
-    55:  {"HP": 80,  "Attack": 82, "Defense": 78, "Speed": 85, "Special": 80},
-    56:  {"HP": 40,  "Attack": 80, "Defense": 35, "Speed": 70, "Special": 35},
-    57:  {"HP": 65,  "Attack": 105, "Defense": 60, "Speed": 95, "Special": 70},
-    58:  {"HP": 55, "Attack": 70, "Defense": 45, "Speed": 60, "Special": 50},
-    59:  {"HP": 90, "Attack": 110, "Defense": 80, "Speed": 95, "Special": 80},
-    60:  {"HP": 40, "Attack": 50, "Defense": 40, "Speed": 90, "Special": 40},
-    61:  {"HP": 65, "Attack": 65, "Defense": 65, "Speed": 90, "Special": 50},
-    62:  {"HP": 90, "Attack": 85, "Defense": 95, "Speed": 70, "Special": 70},
-    63:  {"HP": 25, "Attack": 20, "Defense": 15, "Speed": 90, "Special": 105},
-    64:  {"HP": 40, "Attack": 35, "Defense": 30, "Speed": 105, "Special": 120},
-    65:  {"HP": 55, "Attack": 50, "Defense": 45, "Speed": 120, "Special": 135},
-    66:  {"HP": 70, "Attack": 80, "Defense": 50, "Speed": 35, "Special": 35},
-    67:  {"HP": 80, "Attack": 100, "Defense": 70, "Speed": 45, "Special": 50},
-    68:  {"HP": 90, "Attack": 130, "Defense": 80, "Speed": 55, "Special": 65},
-    69:  {"HP": 50, "Attack": 75, "Defense": 35, "Speed": 40, "Special": 70},
-    70:  {"HP": 65, "Attack": 90, "Defense": 50, "Speed": 55, "Special": 85},
-    71:  {"HP": 80, "Attack": 105, "Defense": 65, "Speed": 70, "Special": 100},
-    72:  {"HP": 40, "Attack": 40, "Defense": 35, "Speed": 70, "Special": 100},
-    73:  {"HP": 80, "Attack": 70, "Defense": 65, "Speed": 100, "Special": 120},
-    74:  {"HP": 40, "Attack": 80, "Defense": 100, "Speed": 20, "Special": 30},
-    75:  {"HP": 55, "Attack": 95, "Defense": 115, "Speed": 35, "Special": 45},
-    76:  {"HP": 80, "Attack": 110, "Defense": 130, "Speed": 45, "Special": 55},
-    77:  {"HP": 50, "Attack": 85, "Defense": 55, "Speed": 90, "Special": 65},
-    78:  {"HP": 65, "Attack": 100, "Defense": 70, "Speed": 105, "Special": 80},
-    79:  {"HP": 90, "Attack": 65, "Defense": 65, "Speed": 15, "Special": 40},
-    80:  {"HP": 95, "Attack": 75, "Defense": 110, "Speed": 30, "Special": 80},
-    81:  {"HP": 25, "Attack": 35, "Defense": 70, "Speed": 45, "Special": 95},
-    82:  {"HP": 50, "Attack": 60, "Defense": 95, "Speed": 70, "Special": 120},
-    83:  {"HP": 52, "Attack": 65, "Defense": 55, "Speed": 60, "Special": 58},
-    84:  {"HP": 35, "Attack": 85, "Defense": 45, "Speed": 75, "Special": 35},
-    85:  {"HP": 60, "Attack": 110, "Defense": 70, "Speed": 100, "Special": 60},
-    86:  {"HP": 65, "Attack": 45, "Defense": 55, "Speed": 45, "Special": 70},
-    87:  {"HP": 90, "Attack": 70, "Defense": 80, "Speed": 70, "Special": 95},
-    88:  {"HP": 80, "Attack": 80, "Defense": 50, "Speed": 25, "Special": 40},
-    89:  {"HP": 105, "Attack": 105, "Defense": 75, "Speed": 50, "Special": 65},
-    90:  {"HP": 30, "Attack": 65, "Defense": 100, "Speed": 40, "Special": 45},
-    91:  {"HP": 50, "Attack": 95, "Defense": 180, "Speed": 70, "Special": 85},
-    92:  {"HP": 30, "Attack": 35, "Defense": 30, "Speed": 80, "Special": 100},
-    93:  {"HP": 45, "Attack": 50, "Defense": 45, "Speed": 95, "Special": 115},
-    94:  {"HP": 60, "Attack": 65, "Defense": 60, "Speed": 110, "Special": 130},
-    95:  {"HP": 35, "Attack": 45, "Defense": 160, "Speed": 70, "Special": 30},
-    96:  {"HP": 60, "Attack": 48, "Defense": 45, "Speed": 42, "Special": 90},
-    97:  {"HP": 85, "Attack": 73, "Defense": 70, "Speed": 67, "Special": 115},
-    98:  {"HP": 30, "Attack": 105, "Defense": 90, "Speed": 55, "Special": 25},
-    99:  {"HP": 55, "Attack": 130, "Defense": 115, "Speed": 75, "Special": 50},
-    100: {"HP": 40, "Attack": 30, "Defense": 50, "Speed": 100, "Special": 55},
-    101: {"HP": 60, "Attack": 50, "Defense": 70, "Speed": 140, "Special": 80},
-    102: {"HP": 60, "Attack": 40, "Defense": 80, "Speed": 40, "Special": 60},
-    103: {"HP": 95, "Attack": 95, "Defense": 85, "Speed": 55, "Special": 125},
-    104: {"HP": 50, "Attack": 50, "Defense": 95, "Speed": 35, "Special": 40},
-    105: {"HP": 60, "Attack": 80, "Defense": 110, "Speed": 45, "Special": 80},
-    106: {"HP": 50, "Attack": 120, "Defense": 53, "Speed": 87, "Special": 35},
-    107: {"HP": 50, "Attack": 105, "Defense": 79, "Speed": 76, "Special": 35},
-    108: {"HP": 90, "Attack": 55, "Defense": 75, "Speed": 30, "Special": 70},
-    109: {"HP": 40, "Attack": 65, "Defense": 95, "Speed": 35, "Special": 60},
-    110: {"HP": 65, "Attack": 90, "Defense": 120, "Speed": 60, "Special": 85},
-    111: {"HP": 80, "Attack": 85, "Defense": 95, "Speed": 25, "Special": 30},
-    112: {"HP": 105, "Attack": 130, "Defense": 120, "Speed": 40, "Special": 45},
-    113: {"HP": 250, "Attack": 5, "Defense": 5, "Speed": 50, "Special": 105},
-    114: {"HP": 65, "Attack": 55, "Defense": 115, "Speed": 60, "Special": 100},
-    115: {"HP": 105, "Attack": 95, "Defense": 80, "Speed": 90, "Special": 40},
-    116: {"HP": 30, "Attack": 40, "Defense": 70, "Speed": 60, "Special": 70},
-    117: {"HP": 55, "Attack": 65, "Defense": 95, "Speed": 85, "Special": 95},
-    118: {"HP": 45, "Attack": 67, "Defense": 60, "Speed": 63, "Special": 50},
-    119: {"HP": 80, "Attack": 92, "Defense": 65, "Speed": 68, "Special": 80},
-    120: {"HP": 30, "Attack": 45, "Defense": 55, "Speed": 85, "Special": 70},
-    121: {"HP": 60, "Attack": 75, "Defense": 85, "Speed": 115, "Special": 100},
-    122: {"HP": 40, "Attack": 45, "Defense": 65, "Speed": 90, "Special": 100},
-    123: {"HP": 70, "Attack": 110, "Defense": 80, "Speed": 105, "Special": 55},
-    124: {"HP": 65, "Attack": 50, "Defense": 35, "Speed": 95, "Special": 95},
-    125: {"HP": 65, "Attack": 83, "Defense": 57, "Speed": 105, "Special": 85},
-    126: {"HP": 65, "Attack": 95, "Defense": 57, "Speed": 93, "Special": 85},
-    127: {"HP": 65, "Attack": 125, "Defense": 100, "Speed": 85, "Special": 55},
-    128: {"HP": 75, "Attack": 100, "Defense": 95, "Speed": 110, "Special": 70},
-    129: {"HP": 20, "Attack": 10, "Defense": 55, "Speed": 80, "Special": 20},
-    130: {"HP": 95, "Attack": 125, "Defense": 79, "Speed": 81, "Special": 100},
-    131: {"HP": 130, "Attack": 85, "Defense": 80, "Speed": 60, "Special": 95},
-    132: {"HP": 48, "Attack": 48, "Defense": 48, "Speed": 48, "Special": 48},
-    133: {"HP": 55, "Attack": 55, "Defense": 50, "Speed": 55, "Special": 65},
-    134: {"HP": 130, "Attack": 65, "Defense": 60, "Speed": 65, "Special": 110},
-    135: {"HP": 65, "Attack": 65, "Defense": 60, "Speed": 130, "Special": 110},
-    136: {"HP": 65, "Attack": 130, "Defense": 60, "Speed": 65, "Special": 110},
-    137: {"HP": 65, "Attack": 60, "Defense": 70, "Speed": 40, "Special": 75},
-    138: {"HP": 35, "Attack": 40, "Defense": 100, "Speed": 35, "Special": 90},
-    139: {"HP": 70, "Attack": 60, "Defense": 125, "Speed": 55, "Special": 115},
-    140: {"HP": 30, "Attack": 80, "Defense": 90, "Speed": 55, "Special": 45},
-    141: {"HP": 60, "Attack": 115, "Defense": 105, "Speed": 80, "Special": 70},
-    142: {"HP": 80, "Attack": 105, "Defense": 65, "Speed": 130, "Special": 60},
-    143: {"HP": 160, "Attack": 110, "Defense": 65, "Speed": 30, "Special": 65},
-    144: {"HP": 90, "Attack": 85, "Defense": 100, "Speed": 85, "Special": 125},
-    145: {"HP": 90, "Attack": 90, "Defense": 85, "Speed": 100, "Special": 125},
-    146: {"HP": 90, "Attack": 100, "Defense": 90, "Speed": 90, "Special": 125},
-    147: {"HP": 41, "Attack": 64, "Defense": 45, "Speed": 50, "Special": 50},
-    148: {"HP": 61, "Attack": 84, "Defense": 65, "Speed": 70, "Special": 70},
-    149: {"HP": 91, "Attack": 134, "Defense": 95, "Speed": 80, "Special": 100},
-    150: {"HP": 106, "Attack": 110, "Defense": 90, "Speed": 130, "Special": 154},
-    151: {"HP": 100, "Attack": 100, "Defense": 100, "Speed": 100, "Special": 100},
+    # index: {"HP": ..., "Attack": ..., "Defense": ..., "Speed": ..., "Special": ...}
+
+    0x01: {"HP": 80,  "Attack": 85,  "Defense": 95,  "Speed": 25,  "Special": 30},   # Rhydon
+    0x02: {"HP": 105, "Attack": 95,  "Defense": 80,  "Speed": 90,  "Special": 40},   # Kangaskhan
+    0x03: {"HP": 46,  "Attack": 57,  "Defense": 40,  "Speed": 50,  "Special": 40},   # Nidoran♂
+    0x04: {"HP": 70,  "Attack": 45,  "Defense": 48,  "Speed": 35,  "Special": 60},   # Clefairy
+    0x05: {"HP": 40,  "Attack": 60,  "Defense": 30,  "Speed": 70,  "Special": 31},   # Spearow
+    0x06: {"HP": 40,  "Attack": 30,  "Defense": 50,  "Speed": 100, "Special": 55},   # Voltorb
+    0x07: {"HP": 81,  "Attack": 92,  "Defense": 77,  "Speed": 85,  "Special": 75},   # Nidoking
+    0x08: {"HP": 95,  "Attack": 75,  "Defense": 110, "Speed": 30,  "Special": 80},   # Slowbro
+    0x09: {"HP": 60,  "Attack": 62,  "Defense": 63,  "Speed": 60,  "Special": 80},   # Ivysaur
+    0x0A: {"HP": 95,  "Attack": 95,  "Defense": 85,  "Speed": 55,  "Special": 125},  # Exeggutor
+    0x0B: {"HP": 90,  "Attack": 55,  "Defense": 75,  "Speed": 30,  "Special": 60},   # Lickitung
+    0x0C: {"HP": 60,  "Attack": 40,  "Defense": 80,  "Speed": 40,  "Special": 60},   # Exeggcute
+    0x0D: {"HP": 80,  "Attack": 80,  "Defense": 50,  "Speed": 25,  "Special": 40},   # Grimer
+    0x0E: {"HP": 60,  "Attack": 65,  "Defense": 60,  "Speed": 110, "Special": 130},  # Gengar
+    0x0F: {"HP": 55,  "Attack": 47,  "Defense": 52,  "Speed": 41,  "Special": 40},   # Nidoran♀
+    0x10: {"HP": 90,  "Attack": 82,  "Defense": 87,  "Speed": 76,  "Special": 75},   # Nidoqueen
+    0x11: {"HP": 50,  "Attack": 50,  "Defense": 95,  "Speed": 35,  "Special": 40},   # Cubone
+    0x12: {"HP": 80,  "Attack": 85,  "Defense": 95,  "Speed": 25,  "Special": 30},   # Rhyhorn
+    0x13: {"HP": 130, "Attack": 85,  "Defense": 80,  "Speed": 60,  "Special": 95},   # Lapras
+    0x14: {"HP": 90,  "Attack": 110, "Defense": 80, "Speed": 95, "Special": 80},      # Arcanine
+    0x15: {"HP": 100, "Attack": 100, "Defense": 100, "Speed": 100, "Special": 100},   # Mew
+
+    0x16: {"HP": 95,  "Attack": 125, "Defense": 79, "Speed": 81, "Special": 100},     # Gyarados
+    0x17: {"HP": 30,  "Attack": 65, "Defense": 100, "Speed": 40, "Special": 45},      # Shellder
+    0x18: {"HP": 40,  "Attack": 40, "Defense": 35, "Speed": 70, "Special": 100},      # Tentacool
+    0x19: {"HP": 30,  "Attack": 35, "Defense": 30, "Speed": 80, "Special": 100},      # Gastly
+    0x1A: {"HP": 70,  "Attack": 110, "Defense": 80, "Speed": 105, "Special": 55},     # Scyther
+    0x1B: {"HP": 30,  "Attack": 45, "Defense": 55, "Speed": 85, "Special": 70},      # Staryu
+    0x1C: {"HP": 79,  "Attack": 83, "Defense": 100, "Speed": 78, "Special": 85},      # Blastoise
+    0x1D: {"HP": 65,  "Attack": 125, "Defense": 100, "Speed": 85, "Special": 55},     # Pinsir
+    0x1E: {"HP": 65,  "Attack": 55, "Defense": 115, "Speed": 60, "Special": 100},     # Tangela
+
+    0x21: {"HP": 55,  "Attack": 70, "Defense": 45, "Speed": 60, "Special": 50},       # Growlithe
+    0x22: {"HP": 35,  "Attack": 45, "Defense": 160, "Speed": 70, "Special": 30},      # Onix
+    0x23: {"HP": 65,  "Attack": 90, "Defense": 65, "Speed": 100, "Special": 61},      # Fearow
+    0x24: {"HP": 40,  "Attack": 45, "Defense": 40, "Speed": 56, "Special": 35},       # Pidgey
+    0x25: {"HP": 90,  "Attack": 65, "Defense": 65, "Speed": 15, "Special": 40},       # Slowpoke
+    0x26: {"HP": 40,  "Attack": 35, "Defense": 30, "Speed": 105, "Special": 120},      # Kadabra
+    0x27: {"HP": 55,  "Attack": 95, "Defense": 115, "Speed": 35, "Special": 45},      # Graveler
+    0x28: {"HP": 250, "Attack": 5, "Defense": 5, "Speed": 50, "Special": 105},         # Chansey
+    0x29: {"HP": 80,  "Attack": 100, "Defense": 70, "Speed": 45, "Special": 50},       # Machoke
+    0x2A: {"HP": 40,  "Attack": 45, "Defense": 65, "Speed": 90, "Special": 100},       # Mr. Mime
+    0x2B: {"HP": 50,  "Attack": 120, "Defense": 53, "Speed": 87, "Special": 35},       # Hitmonlee
+    0x2C: {"HP": 50,  "Attack": 105, "Defense": 79, "Speed": 76, "Special": 35},       # Hitmonchan
+    0x2D: {"HP": 60,  "Attack": 85, "Defense": 69, "Speed": 80, "Special": 65},       # Arbok
+    0x2E: {"HP": 60,  "Attack": 95, "Defense": 80, "Speed": 30, "Special": 80},        # Parasect
+    0x2F: {"HP": 50,  "Attack": 52, "Defense": 48, "Speed": 55, "Special": 50},       # Psyduck
+    0x30: {"HP": 60,  "Attack": 48, "Defense": 45, "Speed": 42, "Special": 90},       # Drowzee
+    0x31: {"HP": 80,  "Attack": 110, "Defense": 130, "Speed": 45, "Special": 55},     # Golem
+
+    0x33: {"HP": 65,  "Attack": 95, "Defense": 57, "Speed": 93, "Special": 85},       # Magmar
+    0x35: {"HP": 65,  "Attack": 83, "Defense": 57, "Speed": 105, "Special": 85},      # Electabuzz
+    0x36: {"HP": 50,  "Attack": 60, "Defense": 95, "Speed": 70, "Special": 120},      # Magneton
+    0x37: {"HP": 40,  "Attack": 65, "Defense": 95, "Speed": 35, "Special": 60},       # Koffing
+
+    0x39: {"HP": 40,  "Attack": 80, "Defense": 35, "Speed": 70, "Special": 35},       # Mankey
+    0x3A: {"HP": 65,  "Attack": 45, "Defense": 55, "Speed": 45, "Special": 70},       # Seel
+    0x3B: {"HP": 10,  "Attack": 55, "Defense": 25, "Speed": 95, "Special": 45},        # Diglett
+    0x3C: {"HP": 75,  "Attack": 100, "Defense": 95, "Speed": 110, "Special": 70},      # Tauros
+
+    0x40: {"HP": 52,  "Attack": 65, "Defense": 55, "Speed": 60, "Special": 58},       # Farfetch'd
+    0x41: {"HP": 60,  "Attack": 55, "Defense": 50, "Speed": 45, "Special": 40},       # Venonat
+    0x42: {"HP": 91,  "Attack": 134, "Defense": 95, "Speed": 80, "Special": 100},      # Dragonite
+
+    0x46: {"HP": 35,  "Attack": 85, "Defense": 45, "Speed": 75, "Special": 35},       # Doduo
+    0x47: {"HP": 40,  "Attack": 50, "Defense": 40, "Speed": 90, "Special": 40},       # Poliwag
+    0x48: {"HP": 65,  "Attack": 50, "Defense": 35, "Speed": 95, "Special": 95},       # Jynx
+    0x49: {"HP": 90,  "Attack": 100, "Defense": 90, "Speed": 90, "Special": 125},      # Moltres
+    0x4A: {"HP": 90,  "Attack": 85, "Defense": 100, "Speed": 85, "Special": 125},      # Articuno
+    0x4B: {"HP": 90,  "Attack": 90, "Defense": 85, "Speed": 100, "Special": 125},      # Zapdos
+    0x4C: {"HP": 48,  "Attack": 48, "Defense": 48, "Speed": 48, "Special": 48},         # Ditto
+    0x4D: {"HP": 40,  "Attack": 45, "Defense": 35, "Speed": 90, "Special": 40},        # Meowth
+    0x4E: {"HP": 30,  "Attack": 105, "Defense": 90, "Speed": 50, "Special": 25},       # Krabby
+
+    0x52: {"HP": 38,  "Attack": 41, "Defense": 40, "Speed": 65, "Special": 65},        # Vulpix
+    0x53: {"HP": 73,  "Attack": 76, "Defense": 75, "Speed": 100, "Special": 100},      # Ninetales
+    0x54: {"HP": 35,  "Attack": 55, "Defense": 30, "Speed": 90, "Special": 50},        # Pikachu
+    0x55: {"HP": 60,  "Attack": 90, "Defense": 55, "Speed": 100, "Special": 90},        # Raichu
+
+    0x58: {"HP": 41, "Attack": 64, "Defense": 45, "Speed": 50, "Special": 50},          # Dratini
+    0x59: {"HP": 61, "Attack": 84, "Defense": 65, "Speed": 70, "Special": 70},          # Dragonair
+    0x5A: {"HP": 30, "Attack": 80, "Defense": 90, "Speed": 55, "Special": 45},          # Kabuto
+    0x5B: {"HP": 60, "Attack": 115, "Defense": 105, "Speed": 80, "Special": 70},         # Kabutops
+    0x5C: {"HP": 30, "Attack": 40, "Defense": 70, "Speed": 60, "Special": 70},           # Horsea
+    0x5D: {"HP": 55, "Attack": 65, "Defense": 95, "Speed": 85, "Special": 95},           # Seadra
+
+    0x60: {"HP": 50, "Attack": 75, "Defense": 85, "Speed": 40, "Special": 30},           # Sandshrew
+    0x61: {"HP": 75, "Attack": 100, "Defense": 110, "Speed": 65, "Special": 55},         # Sandslash
+    0x62: {"HP": 35, "Attack": 40, "Defense": 100, "Speed": 35, "Special": 90},          # Omanyte
+    0x63: {"HP": 70, "Attack": 60, "Defense": 125, "Speed": 55, "Special": 115},         # Omastar
+    0x64: {"HP": 115, "Attack": 45, "Defense": 20, "Speed": 20, "Special": 25},          # Jigglypuff
+    0x65: {"HP": 140, "Attack": 70, "Defense": 45, "Speed": 45, "Special": 50},          # Wigglytuff
+    0x66: {"HP": 55, "Attack": 55, "Defense": 50, "Speed": 55, "Special": 65},           # Eevee
+    0x67: {"HP": 65, "Attack": 130, "Defense": 60, "Speed": 65, "Special": 110},         # Flareon
+    0x68: {"HP": 65, "Attack": 65, "Defense": 60, "Speed": 130, "Special": 110},         # Jolteon
+    0x69: {"HP": 130, "Attack": 65, "Defense": 60, "Speed": 65, "Special": 110},         # Vaporeon
+    0x6A: {"HP": 70, "Attack": 80, "Defense": 50, "Speed": 35, "Special": 35},            # Machop
+    0x6B: {"HP": 40, "Attack": 45, "Defense": 35, "Speed": 55, "Special": 40},            # Zubat
+    0x6C: {"HP": 35, "Attack": 60, "Defense": 44, "Speed": 55, "Special": 40},            # Ekans
+    0x6D: {"HP": 35, "Attack": 70, "Defense": 55, "Speed": 25, "Special": 55},            # Paras
+    0x6E: {"HP": 65, "Attack": 65, "Defense": 65, "Speed": 90, "Special": 50},            # Poliwhirl
+    0x6F: {"HP": 90, "Attack": 85, "Defense": 95, "Speed": 70, "Special": 70},            # Poliwrath
+    0x70: {"HP": 40, "Attack": 35, "Defense": 30, "Speed": 50, "Special": 20},            # Weedle
+    0x71: {"HP": 45, "Attack": 25, "Defense": 50, "Speed": 35, "Special": 25},            # Kakuna
+    0x72: {"HP": 65, "Attack": 80, "Defense": 40, "Speed": 75, "Special": 45},            # Beedrill
+    0x74: {"HP": 60, "Attack": 110, "Defense": 70, "Speed": 100, "Special": 60},           # Dodrio
+    0x75: {"HP": 65, "Attack": 105, "Defense": 60, "Speed": 95, "Special": 60},            # Primeape
+    0x76: {"HP": 35, "Attack": 80, "Defense": 50, "Speed": 120, "Special": 70},            # Dugtrio
+    0x77: {"HP": 70, "Attack": 65, "Defense": 60, "Speed": 90, "Special": 90},             # Venomoth
+    0x78: {"HP": 90, "Attack": 70, "Defense": 80, "Speed": 70, "Special": 95},             # Dewgong
+
+    0x7B: {"HP": 45, "Attack": 30, "Defense": 35, "Speed": 45, "Special": 20},             # Caterpie
+    0x7C: {"HP": 50, "Attack": 20, "Defense": 55, "Speed": 30, "Special": 25},             # Metapod
+    0x7D: {"HP": 60, "Attack": 45, "Defense": 50, "Speed": 70, "Special": 80},             # Butterfree
+    0x7E: {"HP": 90, "Attack": 130, "Defense": 80, "Speed": 55, "Special": 65},            # Machamp
+
+    0x80: {"HP": 80, "Attack": 82, "Defense": 78, "Speed": 85, "Special": 80},             # Golduck
+    0x81: {"HP": 85, "Attack": 73, "Defense": 70, "Speed": 67, "Special": 115},             # Hypno
+    0x82: {"HP": 75, "Attack": 80, "Defense": 70, "Speed": 90, "Special": 75},               # Golbat
+    0x83: {"HP": 106, "Attack": 110, "Defense": 90, "Speed": 130, "Special": 154},           # Mewtwo
+    0x84: {"HP": 160, "Attack": 110, "Defense": 65, "Speed": 30, "Special": 65},             # Snorlax
+    0x85: {"HP": 20, "Attack": 10, "Defense": 55, "Speed": 80, "Special": 20},               # Magikarp
+    0x88: {"HP": 105, "Attack": 105, "Defense": 75, "Speed": 50, "Special": 65},             # Muk
+    0x8A: {"HP": 55, "Attack": 130, "Defense": 115, "Speed": 75, "Special": 50},             # Kingler
+    0x8B: {"HP": 50, "Attack": 95, "Defense": 180, "Speed": 70, "Special": 85},              # Cloyster
+    0x8D: {"HP": 60, "Attack": 50, "Defense": 70, "Speed": 140, "Special": 80},              # Electrode
+    0x8E: {"HP": 95, "Attack": 70, "Defense": 73, "Speed": 60, "Special": 85},               # Clefable
+    0x8F: {"HP": 65, "Attack": 90, "Defense": 120, "Speed": 60, "Special": 85},              # Weezing
+    0x90: {"HP": 65, "Attack": 70, "Defense": 60, "Speed": 115, "Special": 65},              # Persian
+    0x91: {"HP": 60, "Attack": 80, "Defense": 110, "Speed": 45, "Special": 50},              # Marowak
+    0x93: {"HP": 45, "Attack": 50, "Defense": 45, "Speed": 95, "Special": 115},              # Haunter
+    0x94: {"HP": 25, "Attack": 20, "Defense": 15, "Speed": 90, "Special": 105},              # Abra
+    0x95: {"HP": 55, "Attack": 50, "Defense": 45, "Speed": 120, "Special": 135},              # Alakazam
+    0x96: {"HP": 63, "Attack": 60, "Defense": 55, "Speed": 71, "Special": 50},               # Pidgeotto
+    0x97: {"HP": 83, "Attack": 80, "Defense": 75, "Speed": 91, "Special": 70},                # Pidgeot
+    0x98: {"HP": 60, "Attack": 75, "Defense": 85, "Speed": 115, "Special": 100},              # Starmie
+    0x99: {"HP": 45, "Attack": 49, "Defense": 49, "Speed": 45, "Special": 65},                # Bulbasaur
+    0x9A: {"HP": 80, "Attack": 82, "Defense": 83, "Speed": 80, "Special": 100},               # Venusaur
+    0x9B: {"HP": 80, "Attack": 70, "Defense": 65, "Speed": 100, "Special": 120},              # Tentacruel
+    0x9D: {"HP": 45, "Attack": 67, "Defense": 60, "Speed": 63, "Special": 50},                # Goldeen
+    0x9E: {"HP": 80, "Attack": 92, "Defense": 65, "Speed": 68, "Special": 80},                # Seaking
+
+    0xA3: {"HP": 50, "Attack": 85, "Defense": 55, "Speed": 90, "Special": 65},                # Ponyta
+    0xA4: {"HP": 65, "Attack": 100, "Defense": 70, "Speed": 105, "Special": 80},              # Rapidash
+    0xA5: {"HP": 30, "Attack": 56, "Defense": 35, "Speed": 72, "Special": 25},                # Rattata
+    0xA6: {"HP": 55, "Attack": 81, "Defense": 60, "Speed": 97, "Special": 50},                # Raticate
+    0xA7: {"HP": 61, "Attack": 72, "Defense": 57, "Speed": 65, "Special": 55},                # Nidorino
+    0xA8: {"HP": 70, "Attack": 62, "Defense": 67, "Speed": 56, "Special": 55},                # Nidorina
+    0xA9: {"HP": 40, "Attack": 80, "Defense": 100, "Speed": 20, "Special": 30},               # Geodude
+    0xAA: {"HP": 65, "Attack": 60, "Defense": 70, "Speed": 40, "Special": 75},                # Porygon
+    0xAB: {"HP": 80, "Attack": 105, "Defense": 65, "Speed": 130, "Special": 60},              # Aerodactyl
+    0xAD: {"HP": 25, "Attack": 35, "Defense": 70, "Speed": 45, "Special": 95},                # Magnemite
+
+    0xB0: {"HP": 39, "Attack": 52, "Defense": 43, "Speed": 65, "Special": 50},                # Charmander
+    0xB1: {"HP": 44, "Attack": 48, "Defense": 65, "Speed": 43, "Special": 50},                # Squirtle
+    0xB2: {"HP": 58, "Attack": 64, "Defense": 58, "Speed": 80, "Special": 65},                # Charmeleon
+    0xB3: {"HP": 59, "Attack": 63, "Defense": 80, "Speed": 58, "Special": 65},                # Wartortle
+    0xB4: {"HP": 78, "Attack": 84, "Defense": 78, "Speed": 100, "Special": 85},               # Charizard
+    0xB9: {"HP": 45, "Attack": 50, "Defense": 55, "Speed": 30, "Special": 75},                # Oddish
+    0xBA: {"HP": 60, "Attack": 65, "Defense": 70, "Speed": 40, "Special": 85},                # Gloom
+    0xBB: {"HP": 75, "Attack": 80, "Defense": 85, "Speed": 50, "Special": 100},               # Vileplume
+    0xBC: {"HP": 50, "Attack": 75, "Defense": 35, "Speed": 40, "Special": 70},                # Bellsprout
+    0xBD: {"HP": 65, "Attack": 90, "Defense": 50, "Speed": 55, "Special": 85},                # Weepinbell
+    0xBE: {"HP": 80, "Attack": 105, "Defense": 65, "Speed": 70, "Special": 100},              # Victreebel
 }
 TYPES = {
     0x00: "Normal",
@@ -1359,4 +1478,5 @@ MOVES = {
 }
 
 locations = location()
-gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokemon - Red Version (USA, Europe).sav")
+game = gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokemon Yellow Version.sav")
+print(game.version)
