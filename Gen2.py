@@ -1,6 +1,7 @@
 import json
 import Gen1
 from Gen1 import attributedDictionary
+from typing import overload
 
 class location:
 
@@ -13,11 +14,132 @@ class location:
             self.money = 0x23DB
             self.johtoBadges = 0x23E4
             self.kantoBadges = 0x23E5
+            self.TMPocket = 0x23E6
+            self.itemPocket = 0x241F
+            self.keyPocket = 0x2449
+            self.ballPocket = 0x2464
+            self.pcPocket = 0x247E
+            self.boxNames = 0x2727
+            self.party = 0x288A
         else:
             self.gameCoins = 0x23E3
             self.money = 0x23DC
             self.johtoBadges = 0x23E5
             self.kantoBadges = 0x23E6
+            self.TMPocket = 0x23E7
+            self.itemPocket = 0x2420
+            self.keyPocket = 0x244A
+            self.ballPocket = 0x2465
+            self.pcPocket = 0x247F
+            self.boxNames = 0x2703
+            self.party = 0x2865
+
+class pocket:
+    def __init__(self):
+        self.store : list[item] = []
+        self.descriptiveStore : dict[str, item] = {}
+
+    @overload
+    def __getitem__(self, key : int) -> item: # type: ignore
+        return self.store[key]
+
+    @overload
+    def __getitem__(self, key : str) -> item:
+        return self.descriptiveStore[key]
+
+    def __setitem__(self, key : str, value : item):
+        self.descriptiveStore[key] = value
+        self.store.append(value)
+    
+    def __str__(self) -> str:
+        return "\n".join([str(im) for im in self.store])
+
+class bag:
+    def __init__(self):
+        self.TMHM = pocket()
+        self.item = pocket()
+        self.ball = pocket()
+        self.key = pocket()
+        self.pc = pocket()
+
+class item:
+    def __init__(self, index : int, count : int) -> None:
+        self.index = index
+        self.count = count
+        self.name : str = GEN2_ITEMS[index]
+
+    def __str__(self) -> str:
+        return f"{self.name}({self.index}): {self.count}"
+
+class pokemon:
+    def __init__(self, raw : bytes):
+        self.index = raw[0x0]
+        self.speciesName = DEX[self.index - 1]
+        self.heldIndex = raw[0x1]
+        self.heldItem = GEN2_ITEMS[self.heldIndex]
+        self.move1 = raw[0x02]
+        self.move2 = raw[0x03]
+        self.move3 = raw[0x04]
+        self.move4 = raw[0x05]
+        self.OTId = int.from_bytes(raw[0x06:0x08])
+        self.eXP = int.from_bytes(raw[0x08:0x0B])
+        self.HPEV = int.from_bytes(raw[0x0B:0x0D])
+        self.atkEV = int.from_bytes(raw[0x0D:0x0F])
+        self.defEV = int.from_bytes(raw[0x0F:0x11])
+        self.spdEV = int.from_bytes(raw[0x11:0x13])
+        self.spcEV = int.from_bytes(raw[0x13:0x15])
+        print(self.HPEV, self.atkEV, self.defEV, self.spdEV, self.spcEV)
+        IVdat = int.from_bytes(raw[0x15:0x17])
+        self.atkIV = IVdat & 0x0f
+        self.defIV = (IVdat & 0xF0 >> 4)
+        self.spdIV = (IVdat & 0x0F00 >> 8)
+        self.spcIV = IVdat >> 12
+        self.hpIV = (
+            ((self.atkIV & 1) << 3) |
+            ((self.defIV & 1) << 2) |
+            ((self.spdIV & 1) << 1) |
+            (self.spcIV & 1)
+        )
+
+        self.move1pp = raw[0x17] & 0b111111
+        self.move1ppups = raw[0x17] >> 6
+
+        self.move2pp = raw[0x18] & 0b111111
+        self.move2ppups = raw[0x18] >> 6
+
+        self.move3pp = raw[0x19] & 0b111111
+        self.move3ppups = raw[0x19] >> 6
+
+        self.move4pp = raw[0x1A] & 0b111111
+        self.move4ppups = raw[0x1A] >> 6
+
+        self.friendship = raw[0x1B]
+
+        self.pokerus = True if raw[0x1C] == 1 else False
+
+        match raw[0x1D] >> 6:
+            case 1:
+                self.caughtTime = "morning"
+            case 2:
+                self.caughtTime = "afternoon"
+            case 3:
+                self.caughtTime = "night"
+            case _:
+                raise ValueError("Bad caught time")
+        self.caughtLevel = raw[0x1D] & 0b111111
+        self.otGender = "male" if raw[0x1E] >> 7 == 0 else "female"
+        self.location = GEN2_LOCATIONS[raw[0x1E] & 0b1111111]
+
+        self.level = raw[0x1F]
+        assert 0 < self.level <= 100
+
+
+class box:
+    def __init__(self, holds : list[pokemon], boxNam : str):
+        self.pokemon = holds
+        self.boxName = boxNam
+    def __getitem__(self, key : int):
+        return self.pokemon[key]
 
 class gameSave:
     def __init__(self, fpath : str) -> None:
@@ -84,6 +206,81 @@ class gameSave:
                 else:
                     self.johtoBadges.__setattr__(BADGES[i], False)
 
+            # read items (TM/HM Pocket)
+            self.bag = bag()
+            startIndex = 190
+            sav.seek(locations.TMPocket)
+            for tm in sav.read(57):
+                assert 0 < tm < 100
+                startIndex += 1
+                if tm == 0:
+                    continue
+                self.bag.TMHM[GEN2_ITEMS[startIndex]] = item(startIndex, tm)
+
+            # item pocket
+
+            sav.seek(locations.itemPocket)
+            count = sav.read(1)[0]
+            assert 0 < count < 21
+            for i in range(count):
+                indx = sav.read(1)[0]
+                itemcount = sav.read(1)[0]
+                assert 0 < itemcount < 100
+                self.bag.item[GEN2_ITEMS[indx]] = item(indx, itemcount)
+
+            # key pocket
+
+            sav.seek(locations.keyPocket)
+            count = sav.read(1)[0]
+            assert 0 < count < 26
+            for i in range(count):
+                indx = sav.read(1)[0]
+                self.bag.key[GEN2_ITEMS[indx]] = item(indx, 1)
+
+
+            # ball pocket
+
+            sav.seek(locations.ballPocket)
+            count = sav.read(1)[0]
+            assert 0 < count < 13
+            for i in range(count):
+                indx = sav.read(1)[0]
+                itemcount = sav.read(1)[0]
+                assert 0 < itemcount < 100
+                self.bag.ball[GEN2_ITEMS[indx]] = item(indx, itemcount)
+
+            # pc pocket
+
+            sav.seek(locations.pcPocket)
+            count = sav.read(1)[0]
+            assert 0 < count < 51
+            for i in range(count):
+                indx = sav.read(1)[0]
+                itemcount = sav.read(1)[0]
+                assert 0 < itemcount < 100
+                self.bag.ball[GEN2_ITEMS[indx]] = item(indx, itemcount)
+
+            # box names
+            sav.seek(locations.boxNames)
+            self.boxNames : list[str] = []
+            for i in range(14):
+                bits = sav.read(9)
+                name = ""
+                for bit in bits:
+                    if bit == 0x50: break
+                    name += GEN2_CHARMAP[bit]
+                self.boxNames.append(name)
+
+            # party
+
+            sav.seek(locations.party)
+            count = sav.read(1)[0]
+            sav.read(7)
+            parttemp : list[pokemon] = []
+            for i in range(count):
+                parttemp.append(pokemon(sav.read(48)))
+            self.party = box(parttemp, "party")
+
     def generateChecksum(self, startOffset : int, endOffset : int):
         return sum(self.dump[startOffset:endOffset]) & 0xFFFF
 
@@ -96,194 +293,24 @@ class gameSave:
         else:
             raise NameError("Could not determine type of game")
 
-GEN2_CHARMAP = {
-    0x00: "\0",
-
-    # Control / special characters
-    0x14: "<PLAYER>",
-    0x15: "<MOBILE>",
-    0x16: "<CR>",
-    0x1F: " ",
-    0x22: "\n",
-    0x24: "<POKE>",
-    0x25: "<WBR>",
-    0x38: "<RED>",
-    0x39: "<GREEN>",
-    0x3F: "<ENEMY>",
-    0x49: "<MOM>",
-    0x4A: "<PKMN>",
-    0x4B: "<CONT>",
-    0x4C: "<SCROLL>",
-    0x4E: "<NEXT>",
-    0x4F: "<LINE>",
-    0x50: "@",
-    0x51: "<PARA>",
-    0x52: "<PLAYER>",
-    0x53: "<RIVAL>",
-    0x54: "#",
-    0x55: "<CONT>",
-    0x56: "……",
-    0x57: "<DONE>",
-    0x58: "<PROMPT>",
-    0x59: "<TARGET>",
-    0x5A: "<USER>",
-    0x5B: "<PC>",
-    0x5C: "<TM>",
-    0x5D: "<TRAINER>",
-    0x5E: "<ROCKET>",
-    0x5F: "<DEXEND>",
-
-    # Extra font
-    0x60: "■",
-    0x61: "▲",
-    0x62: "☎",
-    0x63: "<BOLD_D>",
-    0x64: "<BOLD_E>",
-    0x65: "<BOLD_F>",
-    0x66: "<BOLD_G>",
-    0x67: "<BOLD_H>",
-    0x68: "<BOLD_I>",
-    0x69: "<BOLD_V>",
-    0x6A: "<BOLD_S>",
-    0x6B: "<BOLD_L>",
-    0x6C: "<BOLD_M>",
-    0x6D: ":",
-    0x6E: "′",
-    0x6F: "″",
-    0x70: "<PO>",
-    0x71: "<KE>",
-    0x72: "“",
-    0x73: "”",
-    0x74: "·",
-    0x75: "…",
-    0x76: "ぁ",
-    0x77: "ぇ",
-    0x78: "ぉ",
-    0x79: "┌",
-    0x7A: "─",
-    0x7B: "┐",
-    0x7C: "│",
-    0x7D: "└",
-    0x7E: "┘",
-    0x7F: " ",
-
-    # Uppercase
-    0x80: "A",
-    0x81: "B",
-    0x82: "C",
-    0x83: "D",
-    0x84: "E",
-    0x85: "F",
-    0x86: "G",
-    0x87: "H",
-    0x88: "I",
-    0x89: "J",
-    0x8A: "K",
-    0x8B: "L",
-    0x8C: "M",
-    0x8D: "N",
-    0x8E: "O",
-    0x8F: "P",
-    0x90: "Q",
-    0x91: "R",
-    0x92: "S",
-    0x93: "T",
-    0x94: "U",
-    0x95: "V",
-    0x96: "W",
-    0x97: "X",
-    0x98: "Y",
-    0x99: "Z",
-
-    # Punctuation
-    0x9A: "(",
-    0x9B: ")",
-    0x9C: ":",
-    0x9D: ";",
-    0x9E: "[",
-    0x9F: "]",
-
-    # Lowercase
-    0xA0: "a",
-    0xA1: "b",
-    0xA2: "c",
-    0xA3: "d",
-    0xA4: "e",
-    0xA5: "f",
-    0xA6: "g",
-    0xA7: "h",
-    0xA8: "i",
-    0xA9: "j",
-    0xAA: "k",
-    0xAB: "l",
-    0xAC: "m",
-    0xAD: "n",
-    0xAE: "o",
-    0xAF: "p",
-    0xB0: "q",
-    0xB1: "r",
-    0xB2: "s",
-    0xB3: "t",
-    0xB4: "u",
-    0xB5: "v",
-    0xB6: "w",
-    0xB7: "x",
-    0xB8: "y",
-    0xB9: "z",
-
-    # German characters (present in Western font)
-    0xC0: "Ä",
-    0xC1: "Ö",
-    0xC2: "Ü",
-    0xC3: "ä",
-    0xC4: "ö",
-    0xC5: "ü",
-
-    # Contractions
-    0xD0: "'d",
-    0xD1: "'l",
-    0xD2: "'m",
-    0xD3: "'r",
-    0xD4: "'s",
-    0xD5: "'t",
-    0xD6: "'v",
-
-    # Symbols / punctuation
-    0xDF: "←",
-    0xE0: "'",
-    0xE1: "<PK>",
-    0xE2: "<MN>",
-    0xE3: "-",
-    0xE6: "?",
-    0xE7: "!",
-    0xE8: ".",
-    0xE9: "&",
-    0xEA: "é",
-    0xEB: "→",
-    0xEC: "▷",
-    0xED: "▶",
-    0xEE: "▼",
-    0xEF: "♂",
-    0xF0: "¥",
-    0xF1: "×",
-    0xF2: ".",
-    0xF3: "/",
-    0xF4: ",",
-    0xF5: "♀",
-
-    # Numbers
-    0xF6: "0",
-    0xF7: "1",
-    0xF8: "2",
-    0xF9: "3",
-    0xFA: "4",
-    0xFB: "5",
-    0xFC: "6",
-    0xFD: "7",
-    0xFE: "8",
-    0xFF: "9",
-}
 BADGES = ["Zephyr", "Insect", "Plain", "Fog", "Storm", "Mineral", "Glacier", "Rising"]
+with open("GEN2_CHARMAP.json", "r") as f:
+    GEN2_CHARMAP_STR : dict[str,str]= json.load(f)
+    GEN2_CHARMAP : dict[int,str] = {}
+    for key, val in GEN2_CHARMAP_STR.items():
+        GEN2_CHARMAP[int(key)] = val
+with open("GEN2_ITEMS.json", "r") as f:
+        GEN2_ITEMS_STR : dict[str,str]= json.load(f)
+        GEN2_ITEMS : dict[int,str] = {}
+        for key, val in GEN2_ITEMS_STR.items():
+            GEN2_ITEMS[int(key)] = val
+with open("moves.json", "r") as f:
+    MOVES : list[str] = json.load(f)
+with open("dexnational.json") as f:
+    DEX : list[str] = json.load(f)
+with open("Locations2.json", "r") as f:
+    GEN2_LOCATIONS : list[str] = json.load(f)
 
 game = gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokémon - Crystal Version.sav")
-print(game.johtoBadges)
+for i in game.party:
+    print(i.speciesName)

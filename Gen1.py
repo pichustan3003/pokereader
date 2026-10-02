@@ -46,10 +46,10 @@ class attributedDictionary:
 class pokemon:
     def __str__(self) -> str:
         moves = [
-            MOVES.get(self.move1, f"Unknown ({self.move1:02X})"),
-            MOVES.get(self.move2, f"Unknown ({self.move2:02X})"),
-            MOVES.get(self.move3, f"Unknown ({self.move3:02X})"),
-            MOVES.get(self.move4, f"Unknown ({self.move4:02X}")
+            MOVES[self.move1],
+            MOVES[self.move2],
+            MOVES[self.move3],
+            MOVES[self.move4],
         ]
         return (
             f"{self.index}\n"
@@ -101,9 +101,19 @@ class pokemon:
             (self.spcIV & 1)
         )
 
-        self.lvl = data[0x21] if not inbox else data[3]
+        self.move1pp = data[0x1D] & 0b111111
+        self.move1ppups = data[0x1D] >> 6
 
-        dex_number = POKEDEX_NUMBER[self.index] # type: ignore
+        self.move2pp = data[0x1E] & 0b111111
+        self.move2ppups = data[0x1E] >> 6
+
+        self.move3pp = data[0x1F] & 0b111111
+        self.move3ppups = data[0x1F] >> 6
+
+        self.move4pp = data[0x20] & 0b111111
+        self.move4ppups = data[0x20] >> 6
+
+        self.lvl = data[0x21] if not inbox else data[3]
         base = BASE_STATS[self.index]
 
         # Party mons store the stats the game currently uses (not recalc'd on EV gain).
@@ -310,7 +320,6 @@ class gameSave:
                 for i in bytes:
                     if i  == 0x50: break
                     daycareot += POKERED_CHARMAP[i]
-
                 self.daycare = pokemon(sav.read(33), True)
                 self.daycare.setNick(daycarename)
                 self.daycare.setOTName(daycareot)
@@ -349,10 +358,12 @@ class gameSave:
             for c in range(6):
                 sav.seek(locations.box1 + 0x462 * c)
                 boxCount = sav.read(1)[0]
-                sav.seek(locations.box1+0x16 + 0x462 * c)
-                print(boxCount)
+
                 if boxCount > 20:
                     continue
+
+                sav.seek(locations.box1 + 0x16 + 0x462 * c)
+
                 for i in range(boxCount):
                     self.boxes[c].append(pokemon(sav.read(33), True))
                 sav.seek(locations.box1+0x2AA + 0x462 * c)
@@ -428,11 +439,10 @@ class gameSave:
                         if b  == 0x50: break
                         name += POKERED_CHARMAP[b] 
                     self.boxes[c][i].setNick(name)
-            print(self.daycare)
     def generateChkSum(self, startingOffset : int, endingOffset : int):
         return (~sum(self.dump[startingOffset:endingOffset])) & 0xFF
 
-with open("dex2.json", encoding="utf-8") as f: pokemonDexOrder = json.load(f)
+with open("dex1.json", encoding="utf-8") as f: pokemonDexOrder = json.load(f)
 POKEDEX_NUMBER = { # type: ignore
     0x01: 112,  # Rhydon
     0x02: 115,  # Kangaskhan
@@ -1488,7 +1498,5 @@ MOVES = {
     0xA4: "Substitute",
     0xA5: "Struggle",
 }
-
 locations = location()
-game = gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokemon Yellow Version.sav")
-print(game.version)
+game = gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokemon - Red Version (USA, Europe).sav")
