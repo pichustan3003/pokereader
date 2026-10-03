@@ -34,6 +34,9 @@ class location:
             self.boxNames = 0x2703
             self.party = 0x2865
 
+        self.boxes = 0x4000
+        self.boxes2 = 0x6000
+
 class pocket:
     def __init__(self):
         self.store : list[item] = []
@@ -88,7 +91,6 @@ class pokemon:
         self.defEV = int.from_bytes(raw[0x0F:0x11])
         self.spdEV = int.from_bytes(raw[0x11:0x13])
         self.spcEV = int.from_bytes(raw[0x13:0x15])
-        print(self.HPEV, self.atkEV, self.defEV, self.spdEV, self.spcEV)
         IVdat = int.from_bytes(raw[0x15:0x17])
         self.atkIV = IVdat & 0x0f
         self.defIV = (IVdat & 0xF0 >> 4)
@@ -118,17 +120,20 @@ class pokemon:
         self.pokerus = True if raw[0x1C] == 1 else False
 
         match raw[0x1D] >> 6:
+            case 0:
+                self.caughtTime = "n/a"
             case 1:
                 self.caughtTime = "morning"
             case 2:
-                self.caughtTime = "afternoon"
+                self.caughtTime = "day"
             case 3:
                 self.caughtTime = "night"
             case _:
-                raise ValueError("Bad caught time")
+                raise ValueError("Bad caught time", raw[0x1D] >> 6)
         self.caughtLevel = raw[0x1D] & 0b111111
         self.otGender = "male" if raw[0x1E] >> 7 == 0 else "female"
-        self.location = GEN2_LOCATIONS[raw[0x1E] & 0b1111111]
+        print(self.speciesName, self.caughtTime)
+        self.location = GEN2_LOCATIONS[raw[0x1E] & 0b1111111] if (raw[0x1E] & 0b1111111) in range(len(GEN2_LOCATIONS)) else "n/a"
 
         self.level = raw[0x1F]
         assert 0 < self.level <= 100
@@ -280,6 +285,19 @@ class gameSave:
             for i in range(count):
                 parttemp.append(pokemon(sav.read(48)))
             self.party = box(parttemp, "party")
+
+            # boxes
+
+            sav.seek(locations.boxes)
+            self.boxes : list[box] = []
+            for b in range(14):
+                hold : list[pokemon] = []
+                seek = locations.boxes + (0x450*b) if b < 7 else locations.boxes2 + (0x450*(b-7))
+                sav.seek(seek) 
+                count = sav.read(22)[0]
+                for i in range(count):
+                    hold.append(pokemon(sav.read(32)))
+                self.boxes.append(box(hold, self.boxNames[b]))
 
     def generateChecksum(self, startOffset : int, endOffset : int):
         return sum(self.dump[startOffset:endOffset]) & 0xFFFF
