@@ -21,6 +21,8 @@ class location:
             self.pcPocket = 0x247E
             self.boxNames = 0x2727
             self.party = 0x288A
+            self.pokeOwn = 0x2A4C
+            self.pokeSeen = 0x2A6C
         else:
             self.gameCoins = 0x23E3
             self.money = 0x23DC
@@ -33,7 +35,9 @@ class location:
             self.pcPocket = 0x247F
             self.boxNames = 0x2703
             self.party = 0x2865
-
+            self.pokeOwn = 0x2A27
+            self.pokeSeen = 0x2A47
+        self.daycare1 = 0x2AA9
         self.boxes = 0x4000
         self.boxes2 = 0x6000
 
@@ -42,6 +46,9 @@ class pocket:
         self.store : list[item] = []
         self.descriptiveStore : dict[str, item] = {}
 
+    def __iter__(self):
+        return iter(self.store)
+    
     @overload
     def __getitem__(self, key : int) -> item: # type: ignore
         return self.store[key]
@@ -78,6 +85,8 @@ class pokemon:
     def __init__(self, raw : bytes):
         self.index = raw[0x0]
         self.speciesName = DEX[self.index - 1]
+        self.nickname = self.speciesName
+        self.otName = "None"
         self.heldIndex = raw[0x1]
         self.heldItem = GEN2_ITEMS[self.heldIndex]
         self.move1 = raw[0x02]
@@ -132,13 +141,16 @@ class pokemon:
                 raise ValueError("Bad caught time", raw[0x1D] >> 6)
         self.caughtLevel = raw[0x1D] & 0b111111
         self.otGender = "male" if raw[0x1E] >> 7 == 0 else "female"
-        print(self.speciesName, self.caughtTime)
         self.location = GEN2_LOCATIONS[raw[0x1E] & 0b1111111] if (raw[0x1E] & 0b1111111) in range(len(GEN2_LOCATIONS)) else "n/a"
 
         self.level = raw[0x1F]
         assert 0 < self.level <= 100
 
+    def setnick(self, nick : str):
+        self.nickname = nick
 
+    def setOT(self, otname : str):
+        self.otName = otname
 class box:
     def __init__(self, holds : list[pokemon], boxNam : str):
         self.pokemon = holds
@@ -216,7 +228,7 @@ class gameSave:
             startIndex = 190
             sav.seek(locations.TMPocket)
             for tm in sav.read(57):
-                assert 0 < tm < 100
+                assert 0 <= tm < 100
                 startIndex += 1
                 if tm == 0:
                     continue
@@ -258,7 +270,7 @@ class gameSave:
 
             sav.seek(locations.pcPocket)
             count = sav.read(1)[0]
-            assert 0 < count < 51
+            assert 0 <= count < 51
             for i in range(count):
                 indx = sav.read(1)[0]
                 itemcount = sav.read(1)[0]
@@ -284,7 +296,41 @@ class gameSave:
             parttemp : list[pokemon] = []
             for i in range(count):
                 parttemp.append(pokemon(sav.read(48)))
+
+            for i in range(6-count): sav.read(48)
+            for i in range(count):
+                ot = ""
+                print(parttemp[i].speciesName)
+                print(sav.tell())
+                for char in sav.read(11):
+                    if char == 0x50: break
+                    ot += GEN2_CHARMAP[char]
+                parttemp[i].setOT(ot)
+            sav.read((6 - count) * 11)
+            for i in range(count):
+                nick = ""
+
+                for char in sav.read(11):
+                    if char == 0x50: break
+                    nick += GEN2_CHARMAP[char]
+                parttemp[i].setnick(nick)
             self.party = box(parttemp, "party")
+
+            # dex completion
+
+            sav.seek(locations.pokeSeen)
+            sbin = bin(int.from_bytes(sav.read(32)))[2:]
+            self.pokedexSeen = attributedDictionary()
+            for i in range(len(sbin)):
+                if sbin[i] == "1": self.pokedexSeen.__setattr__(DEX[i], True)
+                else: self.pokedexSeen.__setattr__(DEX[i], False)
+
+            sav.seek(locations.pokeOwn)
+            sbin = bin(int.from_bytes(sav.read(32)))[2:]
+            self.pokedexOwn = attributedDictionary()
+            for i in range(len(sbin)):
+                if sbin[i] == "1": self.pokedexOwn.__setattr__(DEX[i], True)
+                else: self.pokedexOwn.__setattr__(DEX[i], False)
 
             # boxes
 
@@ -297,6 +343,27 @@ class gameSave:
                 count = sav.read(22)[0]
                 for i in range(count):
                     hold.append(pokemon(sav.read(32)))
+
+
+                for i in range(20-count): sav.read(32)
+                for i in range(count):
+                    ot = ""
+                    print(hold[i].speciesName)
+                    print(sav.tell())
+                    for char in sav.read(11):
+                        if char == 0x50:
+                            break
+                        ot += GEN2_CHARMAP[char]
+                    hold[i].setOT(ot)
+                sav.read((20 - count) * 11)
+                for i in range(count):
+                    nick = ""
+
+                    for char in sav.read(11):
+                        if char == 0x50: break
+                        nick += GEN2_CHARMAP[char]
+                    hold[i].setnick(nick)
+                                
                 self.boxes.append(box(hold, self.boxNames[b]))
 
     def generateChecksum(self, startOffset : int, endOffset : int):
@@ -329,6 +396,6 @@ with open("dexnational.json") as f:
 with open("Locations2.json", "r") as f:
     GEN2_LOCATIONS : list[str] = json.load(f)
 
-game = gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokémon - Crystal Version.sav")
-for i in game.party:
-    print(i.speciesName)
+game = gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokemon - Crystal Version (UE) (V1.1) C!.SAV")
+for i in game.bag.ball:
+    print(i.name)

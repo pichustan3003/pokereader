@@ -171,8 +171,6 @@ class pokemon:
             result = stat + 5
         return result
 
-    
-
 class gameSave:
     def __init__(self, fileName : str):
         with open(fileName, "rb") as sav:
