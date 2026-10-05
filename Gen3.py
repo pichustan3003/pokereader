@@ -29,6 +29,7 @@ class location:
             self.__setattr__(f"section{(i + initialSection) % 14}", 0x1000 * i)
 
         self.section0Offsets()
+        self.section1Offsets()
 
     def section0Offsets(self):
         self.playerName = self.section0
@@ -38,6 +39,18 @@ class location:
         self.options = self.section0 + 0x13
         if self.game == gameVersions.E: self.securityCode = self.section0 + 0xAC
         elif self.game == gameVersions.FRLG: self.securityCode = self.section0 + 0x0AF8
+    
+    def section1Offsets(self):
+        self.teamSize = self.section1 + 0x34 if self.game == gameVersions.FRLG else self.section1 + 0x234
+        self.team = self.teamSize + 4
+        self.money = self.team + 600
+        self.coins = self.money + 4
+        self.pcItems = self.coins+4
+        self.itemPocket = self.section1 + 0x0560 if self.game in [gameVersions.RS, gameVersions.E] else self.section1 + 0x310
+        self.keyItemPocket = self.section1 + {gameVersions.RS: 0x05B0, gameVersions.E: 0x05D8, gameVersions.FRLG: 0x03B8}[self.game]
+        self.ballPocket = self.section1 + {gameVersions.RS: 0x0600, gameVersions.E: 0x0650, gameVersions.FRLG: 0x430}[self.game]
+        self.tmCase = self.section1 + {gameVersions.RS: 0x0640, gameVersions.E: 0x0690, gameVersions.FRLG: 0x0464}[self.game]
+        self.berryPocket = self.section1 + {gameVersions.RS: 0x0740, gameVersions.E: 0x0790, gameVersions.FRLG: 0x054C}[self.game]
 
     def validateChecksums(self):
         for i in range(14):
@@ -124,8 +137,27 @@ class gameSave:
             if self.game in [gameVersions.FRLG, gameVersions.E]:
                 sav.seek(locations.securityCode)
                 self.secCode = int.from_bytes(sav.read(4), "little")
+            else: self.secCode = 0
 
             print(self.name, self.gender, self.tID, self.sID, self.hours, self.minutes, self.seconds)
+
+            # read sector 1
+
+            # team size
+
+            sav.seek(locations.teamSize)
+            print(locations.teamSize)
+            self.teamSize = int.from_bytes(sav.read(4), 'little') if self.game != gameVersions.FRLG else sav.read(1)[0]
+
+            # read gamecoins and dosh
+
+            sav.seek(locations.money)
+            self.money = int.from_bytes(sav.read(4), 'little') ^ self.secCode
+
+            sav.seek(locations.coins)
+            self.gameCoins = int.from_bytes(sav.read(2), 'little') ^ (self.secCode >> 16)
+
+            print(self.teamSize, self.money, self.gameCoins)
 
 
     def readText(self, bytes : bytes):
