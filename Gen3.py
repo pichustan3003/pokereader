@@ -93,18 +93,19 @@ class gameSave:
             #FRLG Test
             sav.seek(0x1000*sects.index(0) + 0xAC)
             self.game : gameVersion | None = None
-            if int.from_bytes(sav.read(2)) == 1: self.game = gameVersions.FRLG
+            if int.from_bytes(sav.read(2), 'little') == 1: self.game = gameVersions.FRLG
 
 
             # RSE Test
-            sav.seek(0x1000*sects.index(0))
-            trainerName = self.readText(sav.read(7))
+            if not self.game:
+                sav.seek(0x1000*sects.index(0))
+                trainerName = self.readText(sav.read(7))
 
-            sav.seek(0x1000*sects.index(0) + 0xAC)
-            test = self.readText(sav.read(7))
+                sav.seek(0x1000*sects.index(0) + 0xAC)
+                test = self.readText(sav.read(7))
 
-            if trainerName == test or test == 0: self.game = gameVersions.RS
-            else: self.game = gameVersions.E
+                if trainerName == test or test == 0: self.game = gameVersions.RS
+                else: self.game = gameVersions.E
 
             if not self.game: raise ValueError("Couldn't determine game")
             print(self.game.title)
@@ -162,9 +163,16 @@ class gameSave:
 
             sav.seek(locations.team)
 
-            for i in range(6):
-                temp = pokemon(sav.read(100), self)
-                print(temp.nick)
+            for i in range(self.teamSize):
+                data = sav.read(100)
+                print(f"slot {i}: offset={sav.tell() - 100:#x}, length={len(data)}")
+                
+                if len(data) != 100:
+                    print("Incomplete Pokémon structure")
+                    break
+
+                temp = pokemon(data, self)
+                print(temp.speciesName)
 
 
     def readText(self, bytes : bytes):
@@ -176,11 +184,80 @@ class gameSave:
         return out
 
 class pokemon:
-    def __init__(self, data : bytes, parent : gameSave):
-        self.personalityValue = int.from_bytes(data[0:4])
-        self.otID = int.from_bytes(data[4:8])
-        self.nick = parent.readText(data[8:18])
+    def __init__(self, data: bytes, parent: gameSave):
+        self.personalityValue = int.from_bytes(data[0:4], "little")
+        self.otID = int.from_bytes(data[4:8], "little")
 
+        self.nick = parent.readText(data[8:18])
+        print(f"OT ID: {self.otID:08X}")
+
+        self.otName = parent.readText(data[0x14:0x1B])
+
+        substruct = data[0x20:0x50]
+        dectKey = self.otID ^ self.personalityValue
+
+        subDectrip = b"".join(
+            (int.from_bytes(substruct[x:x+4], "little") ^ dectKey).to_bytes(
+                4, "little"
+            )
+            for x in range(0, 48, 4)
+        )
+        check = sum([int.from_bytes(subDectrip[i:i+2], 'little') for i in range(0,len(subDectrip), 2)]) & 0xFFFF
+        if int.from_bytes(data[0x1C:0x1E], 'little') != check: raise ValueError(f"Bad checksum {check} Stored {data[0x1C:0x1E]} \n data {data}")
+        subStructOrder = GEN3_SUBSTRUCTURE_ORDER[
+            self.personalityValue % 24
+        ]
+
+        growth = subDectrip[
+            subStructOrder.index("G") * 12:
+            (subStructOrder.index("G") + 1) * 12
+        ]
+
+        self.internalSpecies = int.from_bytes(growth[0:2], "little")
+        self.species = internalToNational(self.internalSpecies)
+        self.speciesName = DEX[self.species-1] if self.species else None
+        print(self.internalSpecies, self.speciesName)
+
+        self.item = growth[2:4]
+        self.itemName = GEN3_ITEMS[int.from_bytes(self.item, 'little')]
+
+        self.eXP = int.from_bytes(growth[4:8], 'little')
+        self.move1PPUp = growth[8] & 0b11
+        self.move2PPUp = (growth[8] >> 2)& 0b11
+        self.move3PPUp = (growth[8] >> 4) & 0b11
+        self.move4PPUp = growth[8] >> 6
+        self.friendship = growth[9]
+
+
+GEN3_SUBSTRUCTURE_ORDER = {
+    0:  "GAEM",
+    1:  "GAME",
+    2:  "GEAM",
+    3:  "GEMA",
+    4:  "GMAE",
+    5:  "GMEA",
+
+    6:  "AGEM",
+    7:  "AGME",
+    8:  "AEGM",
+    9:  "AEMG",
+    10: "AMGE",
+    11: "AMEG",
+
+    12: "EGAM",
+    13: "EGMA",
+    14: "EAGM",
+    15: "EAMG",
+    16: "EMGA",
+    17: "EMAG",
+
+    18: "MGAE",
+    19: "MGEA",
+    20: "MAGE",
+    21: "MAEG",
+    22: "MEGA",
+    23: "MEAG",
+}
 GEN3_CHARMAP = {
     0x01: 'À',
     0x02: 'Á',
@@ -334,5 +411,43 @@ GEN3_CHARMAP = {
     0xEE: 'z',
     0xEF: '►',
 }
+_HOENN_INTERNAL_TO_NATIONAL = [
+    # 277-291: Treecko .. Wurmple-line start
+    252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266,
+    # 292-306: Beautifly .. Shroomish
+    267, 268, 269, 270, 271, 272, 273, 274, 275, 290, 291, 292, 276, 277, 285,
+    # 307-321: Breloom .. Torkoal
+    286, 327, 278, 279, 283, 284, 320, 321, 300, 301, 352, 343, 344, 299, 324,
+    # 322-336: Sableye .. Hariyama
+    302, 339, 340, 370, 341, 342, 349, 350, 318, 319, 328, 329, 330, 296, 297,
+    # 337-351: Electrike .. Spoink-1
+    309, 310, 322, 323, 363, 364, 365, 331, 332, 361, 362, 337, 338, 298, 325,
+    # 352-366: Grumpig .. Slaking
+    326, 311, 312, 303, 307, 308, 333, 334, 360, 355, 356, 315, 287, 288, 289,
+    # 367-381: Gulpin .. Relicanth
+    316, 317, 357, 293, 294, 295, 366, 367, 368, 359, 353, 354, 336, 335, 369,
+    # 382-396: Aron .. Shelgon
+    304, 305, 306, 351, 313, 314, 345, 346, 347, 348, 280, 281, 282, 371, 372,
+    # 397-411: Salamence .. Chimecho
+    373, 374, 375, 376, 377, 378, 379, 382, 383, 384, 380, 381, 385, 386, 358,
+]
+assert len(_HOENN_INTERNAL_TO_NATIONAL) == 135
+
+def internalToNational(idx: int) -> int:
+    if 1 <= idx <= 251:
+        return idx
+    if 277 <= idx <= 411:
+        return _HOENN_INTERNAL_TO_NATIONAL[idx - 277]
+    return 0  # unused/old Unown slots, empty, invalid
+
+with open("moves.json", "r") as f:
+    MOVES : list[str] = json.load(f)
+with open("items3.json", "r") as f:
+        GEN3_ITEMS_STR : dict[str,str]= json.load(f)
+        GEN3_ITEMS : dict[int,str] = {}
+        for key, val in GEN3_ITEMS_STR.items():
+            GEN3_ITEMS[int(key)] = val
+with open("dexnational.json") as f:
+    DEX : list[str] = json.load(f)
 
 gameSave(r"Pokemon - Sapphire Version (USA, Europe).sav")
