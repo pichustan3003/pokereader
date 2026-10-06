@@ -75,7 +75,6 @@ class location:
             if final != stored:
                 raise ValueError(f"Unable to validate checksum {i}")
 
-
 class gameSave:
 
     def __init__(self, fpath : str):
@@ -159,6 +158,14 @@ class gameSave:
 
             print(self.teamSize, self.money, self.gameCoins)
 
+            # add item bag parsing when can be bothered
+
+            sav.seek(locations.team)
+
+            for i in range(6):
+                temp = pokemon(sav.read(100), self)
+                print(temp.nick)
+
 
     def readText(self, bytes : bytes):
         if sum(bytes) == 0: return 0
@@ -167,6 +174,12 @@ class gameSave:
             if i == 0xFF: break
             out += GEN3_CHARMAP[i]
         return out
+
+class pokemon:
+    def __init__(self, data : bytes, parent : gameSave):
+        self.personalityValue = int.from_bytes(data[0:4])
+        self.otID = int.from_bytes(data[4:8])
+        self.nick = parent.readText(data[8:18])
 
 GEN3_CHARMAP = {
     0x01: 'À',
@@ -322,4 +335,4 @@ GEN3_CHARMAP = {
     0xEF: '►',
 }
 
-gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokémon Sapphire Version [save file].sav")
+gameSave(r"Pokemon - Sapphire Version (USA, Europe).sav")

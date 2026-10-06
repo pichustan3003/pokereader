@@ -1497,4 +1497,3 @@ MOVES = {
     0xA5: "Struggle",
 }
 locations = location()
-game = gameSave(r"D:\Emulation\Games\Gameboy (all of them)\Pokemon - Red Version (USA, Europe).sav")
