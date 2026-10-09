@@ -172,7 +172,7 @@ class gameSave:
                     break
 
                 temp = pokemon(data, self)
-                print(temp.speciesName)
+                print(temp)
 
 
     def readText(self, bytes : bytes):
@@ -222,12 +222,80 @@ class pokemon:
         self.itemName = GEN3_ITEMS[int.from_bytes(self.item, 'little')]
 
         self.eXP = int.from_bytes(growth[4:8], 'little')
-        self.move1PPUp = growth[8] & 0b11
-        self.move2PPUp = (growth[8] >> 2)& 0b11
-        self.move3PPUp = (growth[8] >> 4) & 0b11
-        self.move4PPUp = growth[8] >> 6
+        move1PPUp = growth[8] & 0b11
+        move2PPUp = (growth[8] >> 2)& 0b11
+        move3PPUp = (growth[8] >> 4) & 0b11
+        move4PPUp = growth[8] >> 6
         self.friendship = growth[9]
 
+        attacks = subDectrip[
+            subStructOrder.index("A") * 12:
+            (subStructOrder.index("A") + 1) * 12
+        ]
+
+        move1 = int.from_bytes(attacks[0:2], 'little')
+        move2 = int.from_bytes(attacks[2:4], 'little')
+        move3 = int.from_bytes(attacks[4:6], 'little')
+        move4 = int.from_bytes(attacks[6:8], 'little')
+        move1name = MOVES[move1]
+        move2name = MOVES[move2]
+        move3name = MOVES[move3]
+        move4name = MOVES[move4]
+        move1pp = attacks[8]
+        move2pp = attacks[9]
+        move3pp = attacks[10]
+        move4pp = attacks[11]
+
+        self.move1 = move(move1, move1name, move1pp, move1PPUp)
+        self.move2 = move(move2, move2name, move2pp, move2PPUp)
+        self.move3 = move(move3, move3name, move3pp, move3PPUp)
+        self.move4 = move(move4, move4name, move4pp, move4PPUp)
+
+        evs = subDectrip[
+            subStructOrder.index("A") * 12:
+            (subStructOrder.index("A") + 1) * 12
+        ]
+
+        hpev = evs[0]
+        atkev = evs[1]
+        defev = evs[2]
+        spdev = evs[3]
+        spatkev = evs[4]
+        spdefev = evs[5]
+        self.coolness = evs[6]
+        self.beauty = evs[7]
+        self.cuteness = evs[8]
+        self.smartness = evs[9]
+        self.tough = evs[10]
+        self.feel = evs[11]
+
+    def __str__(self) -> str:
+        return f"""{self.speciesName} ({self.nick})\n
+        holding: {self.itemName}\n
+        {self.move1}\n
+        {self.move2}\n
+        {self.move3}\n
+        {self.move1}"""
+
+class stat:
+    def __init__(self, IV, EV, BASE, TOTAL) -> None:
+        self.IV = IV
+        self.EV = EV
+        self.BASE = BASE
+        self.TOTAL = TOTAL
+
+    def __str__(self) -> str:
+        return f"{self.TOTAL}, IV:{self.IV}, EV:{self.EV}, BASE:{self.BASE}"
+
+class move:
+    def __init__(self, id: int, name : str, pp : int, up : int):
+        self.id = id
+        self.move = name
+        self.pp = pp
+        self.up = up
+
+    def __str__(self) -> str:
+        return f"{self.move} ({self.id}): {self.pp} ({self.up})"
 
 GEN3_SUBSTRUCTURE_ORDER = {
     0:  "GAEM",
