@@ -252,8 +252,8 @@ class pokemon:
         self.move4 = move(move4, move4name, move4pp, move4PPUp)
 
         evs = subDectrip[
-            subStructOrder.index("A") * 12:
-            (subStructOrder.index("A") + 1) * 12
+            subStructOrder.index("E") * 12:
+            (subStructOrder.index("E") + 1) * 12
         ]
 
         hpev = evs[0]
@@ -269,23 +269,69 @@ class pokemon:
         self.tough = evs[10]
         self.feel = evs[11]
 
+        misc = subDectrip[
+            subStructOrder.index("M") * 12:
+            (subStructOrder.index("M") + 1) * 12
+        ]
+
+        self.caughtLocIndex = misc[1]
+        self.metLocation = GEN3_LOCATIONS[misc[1]]
+        origins = int.from_bytes(misc[2:4], 'little')
+        self.trainerGender = "M" if (origins >> 15) & 1 == 0 else "F"
+        self.caughtBall = BALLS[(origins >> 11) & 0b1111]
+        self.caughtGame = GAMES[(origins >> 7) & 0b111]
+        self.caughtLevel = origins & 0b111111
+
+        ivdat = int.from_bytes(misc[4:8], 'little')
+        hpiv = ivdat & 0b11111
+        atkiv = (ivdat >> 5) & 0b11111
+        defiv = (ivdat >> 10) & 0b11111
+        spdiv = (ivdat >> 15) & 0b11111
+        spcatkiv = (ivdat >> 20) & 0b11111
+        spcdefiv = (ivdat >> 25) & 0b11111
+        self.isEgg = (ivdat >> 30) & 1 == 1
+        self.ability = ivdat >> 31
+
+        self.status = STATUS[int.from_bytes(data[0x50:0x54],'little')]
+        self.level = data[0x54]
+        self.hpCur = int.from_bytes(data[0x56:0x58], 'little')
+        hpMax = int.from_bytes(data[0x58:0x5A], 'little')
+        atk = int.from_bytes(data[0x5A:0x5C], 'little')
+        defe = int.from_bytes(data[0x5C:0x5E], 'little')
+        spd = int.from_bytes(data[0x5E:0x60], 'little')
+        spatk = int.from_bytes(data[0x60:0x62], 'little')
+        spdef = int.from_bytes(data[0x62:0x64], 'little')
+        self.hp = stat(hpiv, hpev, hpMax)
+        self.atk = stat(atkiv, atkev, atk)
+        self.defe = stat(defiv, defev, defe)
+        self.spd = stat(spdiv, spdev, spd)
+        self.spatk = stat(spcatkiv, spatkev, spatk)
+        self.spdef = stat(spcdefiv, spdefev, spdef)
+
     def __str__(self) -> str:
-        return f"""{self.speciesName} ({self.nick})\n
-        holding: {self.itemName}\n
-        {self.move1}\n
-        {self.move2}\n
-        {self.move3}\n
-        {self.move1}"""
+        return f"""{self.speciesName} ({self.nick})
+        holding: {self.itemName}
+        {self.move1}
+        {self.move2}
+        {self.move3}
+        {self.move1}
+        HP:{self.hpCur}/{self.hp}
+        ATK:{self.atk}
+        DEF:{self.defe}
+        SPATK:{self.spatk}
+        SPDEF:{self.spdef}
+        SPD:{self.spd}
+    Met in {self.caughtGame} at level {self.caughtLevel} at {self.metLocation} caught in a {self.caughtBall}
+"""
 
 class stat:
-    def __init__(self, IV, EV, BASE, TOTAL) -> None:
+    def __init__(self, IV : int, EV : int, TOTAL : int) -> None:
         self.IV = IV
         self.EV = EV
-        self.BASE = BASE
         self.TOTAL = TOTAL
 
     def __str__(self) -> str:
-        return f"{self.TOTAL}, IV:{self.IV}, EV:{self.EV}, BASE:{self.BASE}"
+        return f"{self.TOTAL}, IV:{self.IV}, EV:{self.EV}"
 
 class move:
     def __init__(self, id: int, name : str, pp : int, up : int):
@@ -507,6 +553,45 @@ def internalToNational(idx: int) -> int:
     if 277 <= idx <= 411:
         return _HOENN_INTERNAL_TO_NATIONAL[idx - 277]
     return 0  # unused/old Unown slots, empty, invalid
+
+BALLS = {
+    1:"Master",
+    2:"Ultra",
+    3:"Great",
+    4:"Poke",
+    5:"Safari",
+    6:"Net",
+    7:"Dive",
+    8:"Nest",
+    9:"Repeat",
+    10:"Timer",
+    11:"Luxury",
+    12:"Premier"
+}
+GAMES = {
+    1:"Saphire",
+    2:"Ruby",
+    3:"Emerald",
+    4:"FireRed",
+    5:"LeafGreen",
+    15:"Colosseum | XD"
+}
+STATUS = {
+    0:"NONE",
+    1:"SLEEP",
+    2:"SLEEP",
+    3:"POISON",
+    4:"BURN",
+    5:"FREEZE",
+    6:"PARALYSIS",
+    7:"BAD POISON"
+}
+
+with open("locations3.json", "r") as f:
+    GEN3_LOCATIONS_STR : dict[str,str] = json.load(f)
+    GEN3_LOCATIONS : dict[int,str] = {}
+    for k, v in GEN3_LOCATIONS_STR.items():
+        GEN3_LOCATIONS[int(k)] = v
 
 with open("moves.json", "r") as f:
     MOVES : list[str] = json.load(f)
